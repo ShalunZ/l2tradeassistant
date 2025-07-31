@@ -22,19 +22,16 @@ class TradeLoggerGUI:
 
     def show_confirmation_dialog(self, data):
         print("DEBUG: Полученные данные:", data)
-        
 
         dialog = tk.Toplevel(self.root)
         dialog.overrideredirect(True)
         dialog.title("Подтверждение")
-        dialog.geometry("360x460+100+100")
+        dialog.geometry("500x650+100+50")
         dialog.configure(bg="#2a2a2a")
         dialog.attributes("-topmost", True)
         dialog.grab_set()
-
-        # Принудительный фокус
-        dialog.update()
         dialog.focus_force()
+        dialog.update()
 
         # --- Заголовок ---
         header_frame = tk.Frame(dialog, bg="#1e1e1e", height=40)
@@ -50,7 +47,7 @@ class TradeLoggerGUI:
 
         # --- Информационная панель ---
         info_frame = tk.Frame(dialog, bg="#2a2a2a", relief="flat", bd=0)
-        info_frame.pack(fill="x",  pady=5)
+        info_frame.pack(fill="x", padx=20, pady=5)
 
         # Получаем имя предмета из БД
         try:
@@ -66,57 +63,147 @@ class TradeLoggerGUI:
             item_name_db = "Неизвестно"
             is_known = False
 
-        # Формируем текст
+        # Формируем основную информацию
         info_text = (
             f"  ID: {data['item_id']}\n"
             f"  Предмет: {item_name_db}\n"
-            f"  Цена за ед.: {data['unit_price']} \n"
+            f"  Цена за ед.: {data['unit_price']:,} Adena\n"
             f"  Кол-во: {data['quantity']}\n"
-            f"  Сумма: {data['total_price']} "
+            f"  Сумма: {data['total_price']:,} Adena"
         )
 
         tk.Label(
             info_frame,
             text=info_text,
             justify="left",
-            font=("Consolas", 9),
+            font=("Consolas", 10),
             bg="#2a2a2a",
             fg="#e0e0e0",
             anchor="w",
             padx=10,
             pady=10
-        ).pack(side="left")
+        ).pack(fill="x")
+
+        ttk.Separator(dialog, orient='horizontal').pack(fill='x', padx=20, pady=10)
+
+        # --- Аналитика: Сравнение с рынком ---
+        analytics_frame = tk.Frame(dialog, bg="#2a2a2a")
+        analytics_frame.pack(fill="x", padx=20, pady=5)
 
         tk.Label(
-            info_frame,
-            text=info_text,
-            justify="left",
-            font=("Consolas", 9),
+            analytics_frame,
+            text="📊 СРАВНЕНИЕ С РЫНКОМ",
+            font=("Segoe UI", 10, "bold"),
             bg="#2a2a2a",
-            fg="#e0e0e0",
+            fg="#00BFFF"
+        ).pack(anchor="w", pady=(0, 10))
+
+        # Пытаемся получить статистику из БД
+        try:
+            conn = connect_db()
+            cur = conn.cursor()
+
+            outlet_type = data.get("outlet_type")  # 0 = Продажа, 1 = Покупка
+
+            if outlet_type == 0:  # Продажа → сравниваем с другими продажами
+                cur.execute("""
+                    SELECT 
+                        AVG(unit_price)::float AS avg_price,
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY unit_price) AS median_price
+                    FROM trade_logs 
+                    WHERE item_id = %s AND outlet_type = 0 AND date_timestamp >= NOW() - INTERVAL '7 days'
+                """, (data["item_id"],))
+            else:  # Покупка → сравниваем с другими покупками
+                cur.execute("""
+                    SELECT 
+                        AVG(unit_price)::float AS avg_price,
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY unit_price) AS median_price
+                    FROM trade_logs 
+                    WHERE item_id = %s AND outlet_type = 1 AND date_timestamp >= NOW() - INTERVAL '7 days'
+                """, (data["item_id"],))
+
+            row = cur.fetchone()
+            conn.close()
+
+            if row and row[0] is not None:
+                avg_price = float(row[0])
+                median_price = float(row[1])
+                current_price = float(data["unit_price"])
+
+                # Определяем выгодность
+                if outlet_type == 0:  # Продажа: чем выше, тем лучше
+                    if current_price >= avg_price * 1.1:
+                        flag = "🟢"
+                        verdict = "Высокая цена! Лучше среднего"
+                        color = "#4CAF50"
+                    elif current_price <= avg_price * 0.9:
+                        flag = "🔴"
+                        verdict = "Низкая цена. Могут не купить"
+                        color = "#F44336"
+                    else:
+                        flag = "🟡"
+                        verdict = "Средняя цена. Нормально"
+                        color = "#FF9800"
+                else:  # Покупка: чем ниже, тем лучше
+                    if current_price <= avg_price * 0.9:
+                        flag = "🟢"
+                        verdict = "Низкая цена! Выгодно купить"
+                        color = "#4CAF50"
+                    elif current_price >= avg_price * 1.1:
+                        flag = "🔴"
+                        verdict = "Высокая цена. Переплата"
+                        color = "#F44336"
+                    else:
+                        flag = "🟡"
+                        verdict = "Средняя цена. Можно рассмотреть"
+                        color = "#FF9800"
+
+                # Формируем текст аналитики
+                analysis_text = (
+                    f"{flag} {verdict}\n\n"
+                    f"Средняя цена: {avg_price:,.0f} Adena\n"
+                    f"Медиана: {median_price:,.0f} Adena\n"
+                    f"Ваша цена: {current_price:,.0f} Adena\n"
+                    f"Отклонение: {((current_price - avg_price) / avg_price * 100):+.1f}%"
+                )
+
+            else:
+                analysis_text = "📊 Недостаточно данных для анализа.\nПока нет истории по этому предмету."
+                color = "#bbbbbb"
+
+        except Exception as e:
+            print(f"⚠️ Ошибка при получении аналитики: {e}")
+            analysis_text = "❌ Не удалось загрузить аналитику.\nБаза данных недоступна."
+            color = "#d32f2f"
+
+        # Отображаем анализ
+        tk.Label(
+            analytics_frame,
+            text=analysis_text,
+            justify="left",
+            font=("Consolas", 10),
+            bg="#2a2a2a",
+            fg=color,
             anchor="w",
             padx=10,
             pady=10
-        ).pack(side="left")
+        ).pack(fill="x")
 
         ttk.Separator(dialog, orient='horizontal').pack(fill='x', padx=20, pady=10)
 
         # --- Форма ввода ---
-        form_frame = tk.Frame(dialog, bg="#2a2a2a",borderwidth = 3)
+        form_frame = tk.Frame(dialog, bg="#2a2a2a", bd=3)
         form_frame.pack(fill="x", padx=20)
 
-        # Тип лавки (0 = Продажа, 1 = Покупка)
+        # Тип лавки
         tk.Label(form_frame, text="Тип лавки:", font=("Segoe UI", 9), bg="#2a2a2a", fg="#bbbbbb").pack()
-
         outlet_var = tk.StringVar()
         outlet_combo = ttk.Combobox(form_frame, textvariable=outlet_var, state="readonly", width=15, font=("Segoe UI", 9))
         outlet_combo['values'] = ("Покупка", "Продажа")
-        
-        # 🔹 Автоподстановка типа лавки из data
         if "outlet_type" in data:
-            outlet_combo.current(data["outlet_type"])  # 0 → "Покупка", 1 → "Продажа"
+            outlet_combo.current(data["outlet_type"])
         else:
-            outlet_combo.current(0)  # По умолчанию "Покупка"
+            outlet_combo.current(0)
         outlet_combo.pack(pady=(0, 10))
 
         # Город
@@ -124,36 +211,18 @@ class TradeLoggerGUI:
         city_var = tk.StringVar()
         city_combo = ttk.Combobox(form_frame, textvariable=city_var, state="readonly", width=25, font=("Segoe UI", 9))
         city_combo['values'] = (
-            "Talking Island Village",
-            "Elven Village",
-            "The Dark Elf Village",
-            "Orc Village",
-            "Dwarven Village",
-            "The Village of Gludin",
-            "The Town of Gludio",
-            "The Town of Dion",
-            "Giran Castle Town",
-            "Town of Oren",
-            "Heine",
-            "Town of Aden",
-            "Floran Village",
-            "Hunters Village",
-            "Ivory Tower",
-            "Gludin Arena",
-            "Giran Arena",
-            "Coliseum"
+            "Talking Island Village", "Elven Village", "The Dark Elf Village", "Orc Village", "Dwarven Village",
+            "The Village of Gludin", "The Town of Gludio", "The Town of Dion", "Giran Castle Town",
+            "Town of Oren", "Heine", "Town of Aden", "Floran Village", "Hunters Village",
+            "Ivory Tower", "Gludin Arena", "Giran Arena", "Coliseum"
         )
         city_combo.current(previous_choice[1] if previous_choice else 0)
         city_combo.pack(pady=(0, 10))
 
         # Никнейм продавца
-                # 🔹 Автоподстановка никнейма из data
-        seller_name = data.get("seller_name", "Unknown")
-        if seller_name and seller_name != "Unknown":
-            pass
-        else:
-            seller_name=("(*&!@^#*&@!^#!@)")  # Оставляем пустым, если неизвестно
-        
+        seller_name = data.get("seller_name", "").strip()
+        if not seller_name or seller_name == "Unknown":
+            seller_name = "(неизвестно)"
 
         tk.Label(
             form_frame,
@@ -171,7 +240,6 @@ class TradeLoggerGUI:
             fg="#ffffff"
         ).pack()
 
-
         nick_name = tk.StringVar(value=seller_name)
         nickname_entry = tk.Entry(
             form_frame,
@@ -186,16 +254,13 @@ class TradeLoggerGUI:
             highlightbackground="#555"
         )
         nickname_entry.pack()
-        nickname_entry.focus_set()  # Фокус на поле ввода
+        nickname_entry.focus_set()
 
-
-
-
-        # Поле для названия предмета (если неизвестно)
+        # Название предмета (если неизвестно)
         item_name_var = None
         item_name_entry = None
         if not is_known:
-            tk.Label(form_frame, text="Название предмета:", font=("Segoe UI", 9), bg="#2a2a2a", fg="#bbbbbb").pack(anchor="w")
+            tk.Label(form_frame, text="Название предмета:", font=("Segoe UI", 9), bg="#2a2a2a", fg="#bbbbbb").pack()
             item_name_var = tk.StringVar()
             item_name_entry = tk.Entry(
                 form_frame, textvariable=item_name_var, width=25,
@@ -229,12 +294,10 @@ class TradeLoggerGUI:
             if not selected_outlet or not entered_nickname:
                 entered_nickname = seller_name
 
-            # Сохраняем данные
             data["outlet_type"] = 0 if selected_outlet == "Покупка" else 1
             data["outlet_city"] = selected_city_index
             data["nickname"] = entered_nickname
 
-            # Обработка имени предмета
             if item_name_entry is not None:
                 entered_item_name = item_name_entry.get().strip()
                 if not entered_item_name or entered_item_name == "Новое название":
@@ -245,7 +308,6 @@ class TradeLoggerGUI:
                 from database.db import ensure_item_exists
                 ensure_item_exists(data["item_id"], entered_item_name)
 
-            # Сохраняем сделку
             from database.db import save_to_db
             save_to_db(
                 item_id=data["item_id"],
@@ -257,16 +319,13 @@ class TradeLoggerGUI:
                 nickname=data["nickname"]
             )
 
-            # Сохраняем выбор
             global previous_choice
             previous_choice = [data["outlet_type"], selected_city_index]
-
 
             dialog.destroy()
             play_success_sound()
 
         def cancel():
-
             dialog.destroy()
             play_error_sound()
 
