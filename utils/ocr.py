@@ -2,7 +2,7 @@
 import cv2
 import pytesseract
 from config import TESSERACT_PATH
-import numpy as np  # <-- Добавлено!
+import numpy as np  
 
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
