@@ -22,7 +22,6 @@ class TradeLoggerGUI:
 
     def show_confirmation_dialog(self, data):
         print("DEBUG: Полученные данные:", data)
-
         dialog = tk.Toplevel(self.root)
         dialog.overrideredirect(True)
         dialog.title("Подтверждение")
@@ -71,7 +70,6 @@ class TradeLoggerGUI:
             f"  Кол-во: {data['quantity']}\n"
             f"  Сумма: {data['total_price']:,} Adena"
         )
-
         tk.Label(
             info_frame,
             text=info_text,
@@ -85,6 +83,60 @@ class TradeLoggerGUI:
         ).pack(fill="x")
 
         ttk.Separator(dialog, orient='horizontal').pack(fill='x', padx=20, pady=10)
+
+        # --- Проверка на дубликат за последние 8 часов ---
+        is_duplicate = False
+        try:
+            conn = connect_db()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT date_timestamp
+                FROM trade_logs
+                WHERE 
+                    item_id = %s
+                    AND unit_price = %s
+                    AND outlet_type = %s
+                    AND nickname = %s
+                    AND outlet_city = %s
+                    AND date_timestamp >= NOW() - INTERVAL '8 hours'
+                ORDER BY date_timestamp DESC
+                LIMIT 1
+            """, (
+                data["item_id"],
+                data["unit_price"],
+                data["outlet_type"],
+                data.get("nickname") or data.get("seller_name", "Unknown"),
+                data.get("outlet_city", -1)
+            ))
+            row = cur.fetchone()
+            conn.close()
+            if row:
+                last_time = row[0].strftime("%H:%M")
+                is_duplicate = True
+                # Показываем предупреждение
+                dup_frame = tk.Frame(dialog, bg="#3a2a2a", highlightbackground="#aa5555", highlightthickness=1)
+                dup_frame.pack(fill="x", padx=20, pady=5)
+                tk.Label(
+                    dup_frame,
+                    text="⚠️ ВНИМАНИЕ: ДУБЛИКАТ",
+                    font=("Segoe UI", 10, "bold"),
+                    bg="#3a2a2a",
+                    fg="#ffcccc"
+                ).pack(anchor="w", padx=10, pady=(5, 0))
+                tk.Label(
+                    dup_frame,
+                    text=f"Этот продавец уже выставлял\nэтот товар по этой цене\nв последний раз — {last_time}.",
+                    justify="left",
+                    font=("Segoe UI", 9),
+                    bg="#3a2a2a",
+                    fg="#ffaaaa",
+                    anchor="w",
+                    padx=10,
+                    pady=5
+                ).pack(anchor="w")
+                ttk.Separator(dialog, orient='horizontal').pack(fill='x', padx=20, pady=10)
+        except Exception as e:
+            print(f"⚠️ Ошибка при проверке дубликата: {e}")
 
         # --- Аналитика: Сравнение с рынком ---
         analytics_frame = tk.Frame(dialog, bg="#2a2a2a")
@@ -102,18 +154,8 @@ class TradeLoggerGUI:
         try:
             conn = connect_db()
             cur = conn.cursor()
-
             outlet_type = data.get("outlet_type")  # 0 = Продажа, 1 = Покупка
-
             if outlet_type == 0:  # Продажа → сравниваем с другими продажами
-                cur.execute("""
-                    SELECT 
-                        AVG(unit_price)::float AS avg_price,
-                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY unit_price) AS median_price
-                    FROM trade_logs 
-                    WHERE item_id = %s AND outlet_type = 0 AND date_timestamp >= NOW() - INTERVAL '7 days'
-                """, (data["item_id"],))
-            else:  # Покупка → сравниваем с другими покупками
                 cur.execute("""
                     SELECT 
                         AVG(unit_price)::float AS avg_price,
@@ -121,22 +163,27 @@ class TradeLoggerGUI:
                     FROM trade_logs 
                     WHERE item_id = %s AND outlet_type = 1 AND date_timestamp >= NOW() - INTERVAL '7 days'
                 """, (data["item_id"],))
-
+            else:  # Покупка → сравниваем с другими покупками
+                cur.execute("""
+                    SELECT 
+                        AVG(unit_price)::float AS avg_price,
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY unit_price) AS median_price
+                    FROM trade_logs 
+                    WHERE item_id = %s AND outlet_type = 0 AND date_timestamp >= NOW() - INTERVAL '7 days'
+                """, (data["item_id"],))
             row = cur.fetchone()
             conn.close()
-
             if row and row[0] is not None:
                 avg_price = float(row[0])
                 median_price = float(row[1])
                 current_price = float(data["unit_price"])
-
                 # Определяем выгодность
-                if outlet_type == 0:  # Продажа: чем выше, тем лучше
-                    if current_price >= avg_price * 1.1:
+                if outlet_type == 1:  # Продажа: чем выше, тем лучше
+                    if current_price >= median_price * 1.05:
                         flag = "🟢"
                         verdict = "Высокая цена! Лучше среднего"
                         color = "#4CAF50"
-                    elif current_price <= avg_price * 0.9:
+                    elif current_price <= median_price * 0.95:
                         flag = "🔴"
                         verdict = "Низкая цена. Могут не купить"
                         color = "#F44336"
@@ -145,11 +192,11 @@ class TradeLoggerGUI:
                         verdict = "Средняя цена. Нормально"
                         color = "#FF9800"
                 else:  # Покупка: чем ниже, тем лучше
-                    if current_price <= avg_price * 0.9:
+                    if current_price <= median_price * 0.95:
                         flag = "🟢"
                         verdict = "Низкая цена! Выгодно купить"
                         color = "#4CAF50"
-                    elif current_price >= avg_price * 1.1:
+                    elif current_price >= median_price * 1.05:
                         flag = "🔴"
                         verdict = "Высокая цена. Переплата"
                         color = "#F44336"
@@ -158,19 +205,16 @@ class TradeLoggerGUI:
                         verdict = "Средняя цена. Можно рассмотреть"
                         color = "#FF9800"
 
-                # Формируем текст аналитики
                 analysis_text = (
-                    f"{flag} {verdict}\n\n"
+                    f"{flag} {verdict}\n"
                     f"Средняя цена: {avg_price:,.0f} Adena\n"
                     f"Медиана: {median_price:,.0f} Adena\n"
                     f"Ваша цена: {current_price:,.0f} Adena\n"
-                    f"Отклонение: {((current_price - avg_price) / avg_price * 100):+.1f}%"
+                    f"Отклонение: {((current_price - median_price) / median_price * 100):+.1f}%"
                 )
-
             else:
                 analysis_text = "📊 Недостаточно данных для анализа.\nПока нет истории по этому предмету."
                 color = "#bbbbbb"
-
         except Exception as e:
             print(f"⚠️ Ошибка при получении аналитики: {e}")
             analysis_text = "❌ Не удалось загрузить аналитику.\nБаза данных недоступна."
@@ -199,9 +243,9 @@ class TradeLoggerGUI:
         tk.Label(form_frame, text="Тип лавки:", font=("Segoe UI", 9), bg="#2a2a2a", fg="#bbbbbb").pack()
         outlet_var = tk.StringVar()
         outlet_combo = ttk.Combobox(form_frame, textvariable=outlet_var, state="readonly", width=15, font=("Segoe UI", 9))
-        outlet_combo['values'] = ("Покупка", "Продажа")
+        outlet_combo['values'] = ("Продажа", "Покупка")  # Исправлено: сначала "Продажа"
         if "outlet_type" in data:
-            outlet_combo.current(data["outlet_type"])
+            outlet_combo.current(data["outlet_type"])  # 0 = Продажа, 1 = Покупка
         else:
             outlet_combo.current(0)
         outlet_combo.pack(pady=(0, 10))
@@ -223,7 +267,6 @@ class TradeLoggerGUI:
         seller_name = data.get("seller_name", "").strip()
         if not seller_name or seller_name == "Unknown":
             seller_name = "(неизвестно)"
-
         tk.Label(
             form_frame,
             text="Никнейм продавца: ",
@@ -231,7 +274,6 @@ class TradeLoggerGUI:
             bg="#2a2a2a",
             fg="#bbbbbb"
         ).pack()
-
         tk.Label(
             form_frame,
             text=seller_name,
@@ -239,7 +281,6 @@ class TradeLoggerGUI:
             bg="#2a2a2a",
             fg="#ffffff"
         ).pack()
-
         nick_name = tk.StringVar(value=seller_name)
         nickname_entry = tk.Entry(
             form_frame,
@@ -290,11 +331,10 @@ class TradeLoggerGUI:
             selected_outlet = outlet_combo.get()
             selected_city_index = city_combo.current()
             entered_nickname = nickname_entry.get().strip()
-
             if not selected_outlet or not entered_nickname:
                 entered_nickname = seller_name
 
-            data["outlet_type"] = 0 if selected_outlet == "Покупка" else 1
+            data["outlet_type"] = 1 if selected_outlet == "Продажа" else 0  # Исправлено соответствие
             data["outlet_city"] = selected_city_index
             data["nickname"] = entered_nickname
 
@@ -308,6 +348,12 @@ class TradeLoggerGUI:
                 from database.db import ensure_item_exists
                 ensure_item_exists(data["item_id"], entered_item_name)
 
+            # Проверка на дубликат (ещё раз, на всякий случай)
+            if is_duplicate:
+                if not messagebox.askyesno("Подтверждение", "Это дубликат за последние 8 часов. Всё равно сохранить?"):
+                    dialog.destroy()
+                    return
+
             from database.db import save_to_db
             save_to_db(
                 item_id=data["item_id"],
@@ -318,10 +364,8 @@ class TradeLoggerGUI:
                 outlet_city=data["outlet_city"],
                 nickname=data["nickname"]
             )
-
             global previous_choice
             previous_choice = [data["outlet_type"], selected_city_index]
-
             dialog.destroy()
             play_success_sound()
 
@@ -329,11 +373,15 @@ class TradeLoggerGUI:
             dialog.destroy()
             play_error_sound()
 
-        tk.Button(
+        btn_confirm = tk.Button(
             button_frame, text="✅ Подтвердить", command=confirm,
             bg="#007acc", fg="white", font=("Segoe UI", 10), relief="flat", padx=20, pady=6,
             activebackground="#005a9e", cursor="hand2"
-        ).pack(side="left", padx=10)
+        )
+        btn_confirm.pack(side="left", padx=10)
+
+        if is_duplicate:
+            btn_confirm.config(bg="#cc7a00", activebackground="#995a00")  # Оранжевый для дубликата
 
         tk.Button(
             button_frame, text="❌ Отмена", command=cancel,

@@ -1,0 +1,21 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Debug screenshots
+debug_screenshots/
+
+# PyInstaller
+/dist/
+/build/
+/*.spec
+
+# IDE
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
