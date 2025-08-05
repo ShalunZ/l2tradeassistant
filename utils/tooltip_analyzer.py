@@ -62,6 +62,8 @@ def get_item_info(item_id):
             return None
 
         cur = conn.cursor()
+
+        # 1. Получаем данные о рынке
         cur.execute("""
             SELECT 
                 item_name,
@@ -73,8 +75,23 @@ def get_item_info(item_id):
             WHERE item_id = %s
         """, (item_id,))
         row = cur.fetchone()
+
+        # 2. Получаем данные о крафте
+        cur.execute("""
+            SELECT 
+                current_buy_price, 
+                crafting_cost, 
+                profit_from_craft, 
+                profit_percent, 
+                recommendation
+            FROM l2.vw_craft_profit 
+            WHERE item_id = %s
+        """, (item_id,))
+        craft_row = cur.fetchone()
+
         conn.close()
 
+        # Формируем базовую информацию
         if row:
             name, buy, sell, med_buy, med_sell = row
             info = {
@@ -94,7 +111,29 @@ def get_item_info(item_id):
                 "best_buy": "-", "best_sell": "-", "med_buy": "-", "med_sell": "-"
             }
 
+        # Добавляем информацию о крафте
+        if craft_row:
+            buy_price, cost, profit, percent, rec = craft_row
+            info["craft_info"] = {
+                "buy_price": int(buy_price) if buy_price else 0,
+                "cost": int(cost) if cost else 0,
+                "profit": int(profit) if profit else 0,
+                "percent": float(percent) if percent else 0.0,
+                "rec": rec or "⚪ Нет данных"
+            }
+            debug_log(f"🔧 Информация о крафте: {info['craft_info']}")
+        else:
+            info["craft_info"] = {
+                "buy_price": 0,
+                "cost": 0,
+                "profit": 0,
+                "percent": 0.0,
+                "rec": "⚪ Нет данных"
+            }
+
+        # Сохраняем в кэш
         item_cache[item_id] = {"data": info, "timestamp": time.time()}
+
         return info
 
     except Exception as e:
@@ -102,7 +141,10 @@ def get_item_info(item_id):
         return {
             "item_id": item_id,
             "name": "Ошибка",
-            "best_buy": "?", "best_sell": "?", "med_buy": "?", "med_sell": "?"
+            "best_buy": "?", "best_sell": "?", "med_buy": "?", "med_sell": "?",
+            "craft_info": {
+                "buy_price": 0, "cost": 0, "profit": 0, "percent": 0.0, "rec": "🔴 Ошибка"
+            }
         }
 
 
@@ -119,95 +161,121 @@ def get_tooltip_color(info):
     except:
         return "#1e1e1e"
 
-
 def show_tooltip(info, cursor_pos):
     """Показывает всплывающее окно рядом с курсором — невидимое и неинтерактивное"""
     global current_tooltip
 
-    if current_tooltip:
-        hide_tooltip()
-
     try:
-        # Создаём Toplevel как дочерний от основного root
-        dialog = tk.Toplevel(tk._default_root)
-        dialog.overrideredirect(True)  # Убираем рамку
-        dialog.attributes("-topmost", True)  # Поверх всех
-        dialog.attributes("-alpha", 0.95)  # Прозрачность
+        # 🌟 1. Создаём или переиспользуем Toplevel
+        if current_tooltip is None:
+            # Создаём один раз
+            dialog = tk.Toplevel(tk._default_root)
+            dialog.withdraw()  # Скрываем сразу
+            dialog.overrideredirect(True)
+            dialog.attributes("-topmost", True)
+            dialog.attributes("-alpha", 0)  # Полная прозрачность
+            dialog.wm_attributes("-transparentcolor", "#1e1e1e")  # Прозрачный цвет
+            dialog.configure(bg="#1e1e1e")
 
-        # 🔥 КЛЮЧЕВОЕ: делаем окно "прозрачным" для мыши
-        dialog.wm_attributes("-transparentcolor", "#1e1e1e")  # Цвет, который станет прозрачным
-        bg_color = "#1e1e1e"  # Этот цвет исчезнет
-        dialog.configure(bg=bg_color)
+            # Создаём Label и держим ссылку
+            label = tk.Label(
+                dialog,
+                justify="left",
+                font=("Consolas", 9, "bold"),
+                fg="#e0e0e0",
+                anchor="w",
+                padx=12,
+                pady=10
+            )
+            label.pack()
 
-        # Формируем текст
-        profit_line = ""
-        if isinstance(info['best_buy'], int) and isinstance(info['best_sell'], int):
-            profit = info['best_sell'] - info['best_buy']
-            profit_line = f"\n💰 Профит: {profit}"
+            # Сохраняем как current_tooltip
+            current_tooltip = {
+                "window": dialog,
+                "label": label,
+                "follow_thread": None,
+                "is_visible": False
+            }
+        else:
+            dialog = current_tooltip["window"]
+            label = current_tooltip["label"]
+
+        # 🌟 2. Обновляем текст и стиль
+        craft_line = ""
+        bg_label_color = "#2a2a2a"
+
+        if info.get("craft_info"):
+            craft = info["craft_info"]
+            cost = int(craft["cost"])
+            rec = craft["rec"]
+
+            if rec == "🟢 Купи готовый":
+                craft_line = f"\n🧱 Себестоимость: {cost:,}\n🔧 {rec}"
+                bg_label_color = "#3a3a2a"
+            elif rec == "🟡 Крафти сам":
+                profit_craft = int(craft["profit"])
+                craft_line = f"\n🧱 Себестоимость: {cost:,}\n💰 Профит: {profit_craft:,}\n🔧 {rec}"
+                bg_label_color = "#2a3a2a"
+            elif rec == "🔴 Не выгодно":
+                craft_line = f"\n🧱 Себестоимость: {cost:,}\n🔧 {rec}"
+                bg_label_color = "#3a2a2a"
 
         text = (
             f"ID: {info['item_id']}\n"
             f"{info['name']}\n\n"
-            f"🟢 Покупка: {info['best_buy']}\n"
-            f"🔴 Продажа: {info['best_sell']}{profit_line}\n"
-            f"📊 Медиана: {info['med_buy']} / {info['med_sell']}"
+            f"🟢 Buy: {info['best_buy']}\n"
+            f"🔴 Sell: {info['best_sell']}\n"
+            f"📊 Median: {info['med_buy']} / {info['med_sell']}{craft_line}"
         )
 
-        label = tk.Label(
-            dialog,
-            text=text,
-            justify="left",
-            font=("Consolas", 9, "bold"),
-            bg="#2a2a2a",  # Цвет фона лейбла (не совпадает с transparentcolor!)
-            fg="#e0e0e0",
-            anchor="w",
-            padx=12,
-            pady=10
-        )
-        label.pack()
+        label.config(text=text, bg=bg_label_color)
+        dialog.update_idletasks()  # Получаем актуальные размеры
 
-        # Позиционирование: справа от курсора
-        x, y = cursor_pos
-        dialog.update_idletasks()
+        # 🌟 3. Позиционируем
         w, h = dialog.winfo_width(), dialog.winfo_height()
-
-        # Размещаем окно
+        x, y = cursor_pos
         dialog.geometry(f"{w}x{h}+{x + TOOLTIP_OFFSET_X}+{y - TOOLTIP_OFFSET_Y}")
 
-        # 🔁 Обновляем позицию в реальном времени
-        def follow_mouse():
-            nonlocal dialog, label
-            while dialog.winfo_exists() and current_tooltip == dialog:
-                try:
-                    x, y = mouse.Controller().position
-                    dialog.geometry(f"{w}x{h}+{x + TOOLTIP_OFFSET_X}+{y - TOOLTIP_OFFSET_Y}")
-                    time.sleep(0.05)  # Обновление 20 раз в секунду
-                except tk.TclError:
-                    break  # Окно закрыто
+        # 🌟 4. Показываем (если был скрыт)
+        if not current_tooltip["is_visible"]:
+            dialog.deiconify()  # Показываем
+            dialog.attributes("-alpha", 0.95)  # Делаем видимым
+            current_tooltip["is_visible"] = True
 
-            debug_log("🔴 Следование за мышью остановлено")
+        # 🌟 5. Перемещаем в реальном времени
+        if current_tooltip["follow_thread"] is None or not current_tooltip["follow_thread"].is_alive():
+            def follow_mouse():
+                while current_tooltip and current_tooltip["is_visible"]:
+                    try:
+                        x, y = mouse.Controller().position
+                        dialog.geometry(f"{w}x{h}+{x + TOOLTIP_OFFSET_X}+{y - TOOLTIP_OFFSET_Y}")
+                        time.sleep(0.05)
+                    except (tk.TclError, AttributeError):
+                        break
+                debug_log("🔴 Следование за мышью остановлено")
 
-        # Запускаем в отдельном потоке
-        follow_thread = threading.Thread(target=follow_mouse, daemon=True)
-        follow_thread.start()
+            thread = threading.Thread(target=follow_mouse, daemon=True)
+            current_tooltip["follow_thread"] = thread
+            thread.start()
 
-        current_tooltip = dialog
         debug_log(f"🟢 Показан тултип для item_id: {info['item_id']}")
 
     except Exception as e:
         debug_log(f"❌ Ошибка при создании тултипа: {e}")
 
-
 def hide_tooltip():
-    """Скрывает текущее всплывающее окно"""
+    """Скрывает текущее всплывающее окно без уничтожения"""
     global current_tooltip
     if current_tooltip:
         try:
-            current_tooltip.destroy()
-            debug_log("🔴 Тултип скрыт")
+            # Просто скрываем
+            current_tooltip["window"].withdraw()
+            current_tooltip["window"].attributes("-alpha", 0)
+            current_tooltip["is_visible"] = False
+            debug_log("🔴 Тултип скрыт (не уничтожен)")
         except Exception as e:
             debug_log(f"❌ Ошибка при скрытии тултипа: {e}")
-        current_tooltip = None
+        current_tooltip["follow_thread"] = None
 
 
 def get_cursor_area():
@@ -237,7 +305,7 @@ def tooltip_worker(root):
 
     while True:
         try:
-            alt_pressed = keyboard.is_pressed('alt')
+            alt_pressed = keyboard.is_pressed('F')
 
             if alt_pressed:
                 if not is_alt_pressed:
@@ -264,7 +332,7 @@ def tooltip_worker(root):
                         debug_log("❌ Не удалось получить данные для тултипа")
                 elif not item_id and current_tooltip:
                     hide_tooltip()
-                    last_item_id = None
+
 
             else:
                 if is_alt_pressed:

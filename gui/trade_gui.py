@@ -367,11 +367,10 @@ class TradeLoggerGUI:
             global previous_choice
             previous_choice = [data["outlet_type"], selected_city_index]
             dialog.destroy()
-            play_success_sound()
 
         def cancel():
             dialog.destroy()
-            play_error_sound()
+
 
         btn_confirm = tk.Button(
             button_frame, text="✅ Подтвердить", command=confirm,

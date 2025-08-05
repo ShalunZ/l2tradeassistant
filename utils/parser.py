@@ -2,12 +2,15 @@
 from utils.sound import play_error_sound
 import re
 
+
+
+
 def parse_trade_data(text):
     """
     Парсит текст из OCR.
-    Важно: 
-    - 'Items to Sell' → продавец продаёт → я могу купить → outlet_type = 0
-    - 'Buy Items' → продавец покупает → я могу продать → outlet_type = 1
+    Важно:
+    - 'Items to Sell' → он продаёт → я могу купить → outlet_type = 0
+    - 'Buy Items' → он покупает → я могу продать → outlet_type = 1
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     data = {
@@ -16,33 +19,33 @@ def parse_trade_data(text):
         "unit_price": 0,
         "quantity": 0,
         "total_price": 0,
-        "outlet_type": 0,  # По умолчанию: "я покупаю" (он продаёт)
-        "seller_name": "Unknown"
+        "outlet_type": 0,  # По умолчанию: "я покупаю"
+        "seller_name": "Unknown",
+        "calculated_price": False  # Флаг: была ли цена исправлена
     }
 
     try:
         # --- 1. Определяем тип лавки ---
         for line in lines:
             line_lower = line.lower()
-            # "Items to Sell" → он продаёт → я покупаю → outlet_type = 0
             if "items to sell" in line_lower:
-                parts = line.split(" ", 3)
-                seller = parts[3].strip() if len(parts) > 3 else parts[2].strip()
-                if seller and not seller.isdigit():
-                    data["seller_name"] = seller
+                match = re.search(r'items?\s+to\s+sell[:\-]?\s*([A-Za-z0-9_]+)', line, re.IGNORECASE)
+                if match:
+                    seller = match.group(1).strip()
+                    if seller and len(seller) >= 2:
+                        data["seller_name"] = seller
                 data["outlet_type"] = 0  # Я покупаю
                 break
-            # "Buy Items" → он покупает → я продаю → outlet_type = 1
             elif "buy items" in line_lower:
-                parts = line.split(" ", 2)
-                seller = parts[2].strip() if len(parts) > 2 else parts[1].strip()
-                if seller and not seller.isdigit():
-                    data["seller_name"] = seller
+                match = re.search(r'buy\s+items?[:\-]?\s*([A-Za-z0-9_]+)', line, re.IGNORECASE)
+                if match:
+                    seller = match.group(1).strip()
+                    if seller and len(seller) >= 2:
+                        data["seller_name"] = seller
                 data["outlet_type"] = 1  # Я продаю
                 break
 
         # --- 2. Unit Price ---
-        total_price = 0
         for line in lines:
             if "unit price" in line.lower():
                 clean_line = re.sub(r'unit\s*price\s*[:\-]?', '', line, flags=re.IGNORECASE)
@@ -50,26 +53,36 @@ def parse_trade_data(text):
                 numbers = re.findall(r'[\d,]+', clean_line)
                 for num_str in numbers:
                     num = int(num_str.replace(',', ''))
-                    if num > 0:  # Разумная цена
+                    if num > 0:
                         data["unit_price"] = float(num)
                         break
                 break
 
         # --- 3. Quantity ---
         for line in lines:
-            line_lower = line.lower()
-            if "quantity" in line_lower:
-                # Убираем "quantity", двоеточия, точки, артефакты
+            if "quantity" in line.lower():
                 clean_line = re.sub(r'quantity\s*[:;\-\|]?\s*', '', line, flags=re.IGNORECASE)
-                # Извлекаем первое число
-                match = re.search(r'(\d+)', clean_line)
+                match = re.search(r'(\d{1,3}(?:,\d{3})*)', clean_line)  # Поддержка 3,125
                 if match:
-                    qty = int(match.group(1))
+                    qty = int(match.group(1).replace(',', ''))
                     if qty > 0:
                         data["quantity"] = qty
                 break
 
-        # --- 4. Item ID ---
+        # --- 4. Total Price ---
+        for line in lines:
+            if "total price" in line.lower():
+                clean_line = re.sub(r'total\s*price\s*[:\-]?', '', line, flags=re.IGNORECASE)
+                clean_line = re.sub(r'[^\d,]', '', clean_line)
+                numbers = re.findall(r'[\d,]+', clean_line)
+                for num_str in numbers:
+                    num = int(num_str.replace(',', ''))
+                    if num > 0:
+                        data["total_price"] = num
+                        break
+                break
+
+        # --- 5. Item ID ---
         id_pattern = r'\b(?:item\s*id|id)\s*[:\-]?\s*([0-9,.\s]+)'
         for line in lines:
             match = re.search(id_pattern, line, re.IGNORECASE)
@@ -80,20 +93,23 @@ def parse_trade_data(text):
                     data["item_id"] = int(clean_id)
                     break
 
-        # Резерв: любое 3–6-значное число
-        if not data["item_id"]:
-            for line in lines:
-                nums = re.findall(r'\b\d{3,6}\b', line.replace(',', ''))
-                for num_str in nums:
-                    num = int(num_str)
-                    if num > 100 and num != data["unit_price"] and num != data["quantity"]:
-                        data["item_id"] = num
-                        break
-                if data["item_id"]:
-                    break
 
-        # --- 5. Total Price ---
-        data["total_price"] = data["unit_price"] * data["quantity"]
+
+        # --- 6. Валидация unit_price через total_price / quantity ---
+        if data["quantity"] > 0 and data["total_price"] > 0:
+            expected_price = round(data["total_price"] / data["quantity"])
+            if abs(data["unit_price"] - expected_price) > 0:  
+                print(f"⚠️ OCR дал {data['unit_price']}, но ожидается {expected_price}. Исправляем.")
+                data["unit_price"] = float(expected_price)
+                data["calculated_price"] = True
+            else:
+                data["calculated_price"] = False
+        else:
+            data["calculated_price"] = False
+
+        # --- 7. Обновляем total_price, если unit_price и quantity известны ---
+        if data["unit_price"] > 0 and data["quantity"] > 0 and data["total_price"] == 0:
+            data["total_price"] = data["unit_price"] * data["quantity"]
 
         # --- Логирование ---
         print(f"🔍 Найден item_id: {data['item_id']}")
@@ -103,6 +119,7 @@ def parse_trade_data(text):
         print(f"🧮 Общая сумма: {data['total_price']}")
         print(f"🛒 Тип лавки: {'Покупка' if data['outlet_type'] == 0 else 'Продажа'}")
         print(f"👤 Продавец: {data['seller_name']}")
+        print(f"🔧 Исправлена цена: {data['calculated_price']}")
 
     except Exception as e:
         print(f"❌ Ошибка при парсинге данных: {e}")
