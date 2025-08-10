@@ -1,10 +1,12 @@
 # utils/ocr.py
 import cv2
-import pytesseract
+import numpy as np
 from config import TESSERACT_PATH
-import numpy as np  
+import pytesseract
+
 
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+
 
 # utils/ocr.py
 def extract_text_from_image(img):

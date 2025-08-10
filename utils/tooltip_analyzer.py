@@ -11,6 +11,8 @@ from io import BytesIO
 import os
 from datetime import datetime
 import pytesseract
+from config import TESSERACT_PATH
+pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
 # Настройки
 AREA_SIZE = 500
@@ -72,7 +74,7 @@ def get_item_info(item_id):
                 median_buy_price,
                 median_sell_price
             FROM vw_trade_deals 
-            WHERE item_id = %s
+            WHERE item_id = ?
         """, (item_id,))
         row = cur.fetchone()
 
@@ -84,8 +86,8 @@ def get_item_info(item_id):
                 profit_from_craft, 
                 profit_percent, 
                 recommendation
-            FROM l2.vw_craft_profit 
-            WHERE item_id = %s
+            FROM vw_craft_profit 
+            WHERE item_id = ?
         """, (item_id,))
         craft_row = cur.fetchone()
 
