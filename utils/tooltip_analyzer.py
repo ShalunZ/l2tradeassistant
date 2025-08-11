@@ -12,6 +12,10 @@ import os
 from datetime import datetime
 import pytesseract
 from config import TESSERACT_PATH
+import win32gui
+import win32process
+import psutil
+
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
 # Настройки
@@ -38,6 +42,18 @@ DEBUG = True
 def debug_log(message):
     if DEBUG:
         print(f"[Tooltip Analyzer] {message}")
+
+
+def get_active_window_process_name():
+    """Возвращает имя процесса активного окна"""
+    try:
+        hwnd = win32gui.GetForegroundWindow()
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        process = psutil.Process(pid)
+        name = process.name().lower()
+        return name
+    except Exception as e:
+        return None
 
 
 def cleanup_cache():
@@ -307,19 +323,22 @@ def tooltip_worker(root):
 
     while True:
         try:
-            alt_pressed = keyboard.is_pressed('F')
+            # Проверяем, активно ли окно Lineage II
+            active_process = get_active_window_process_name()
+            in_game = active_process in ['lineageii.exe', 'l2.exe', 'lu4.bin']  # Уточни имя процесса
 
-            if alt_pressed:
+            alt_pressed = keyboard.is_pressed('f')
+
+            if alt_pressed and in_game:  # Только если в игре
                 if not is_alt_pressed:
                     is_alt_pressed = True
-                    debug_log("✅ Alt зажат — начинаем анализ")
+                    debug_log("✅ Alt зажат — начинаем анализ (в игре)")
 
                 img, pos = get_cursor_area()
                 if img is None:
                     time.sleep(OCR_TIMEOUT)
                     continue
 
-                # Используем парсер ТОЛЬКО для item_id
                 data = parse_trade_data(pytesseract.image_to_string(img, lang='eng', config='--psm 6'))
                 item_id = data["item_id"]
 
@@ -335,13 +354,11 @@ def tooltip_worker(root):
                 elif not item_id and current_tooltip:
                     hide_tooltip()
 
-
-            else:
-                if is_alt_pressed:
-                    is_alt_pressed = False
-                    debug_log("🔴 Alt отжат — останавливаем анализ")
-                    hide_tooltip()
-                    last_item_id = None
+            elif is_alt_pressed:
+                is_alt_pressed = False
+                debug_log("🔴 Alt отжат — останавливаем анализ")
+                hide_tooltip()
+                last_item_id = None
 
             time.sleep(OCR_TIMEOUT)
 

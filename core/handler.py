@@ -9,9 +9,11 @@ import threading
 import tkinter as tk
 import sys, os
 from utils.sound import *
+import time 
+
+
 
 processing = False
-data_for_gui = {}  # Храним данные для Ctrl+F
 main_root = None   # Единый экземпляр Tk()
 main_gui = None    # Глобальный доступ к GUI
 
@@ -26,11 +28,9 @@ def start_hotkey_listener():
 
 def restart_program():
     """Перезапускает программу при нажатии Ctrl+P."""
-    play_loud_sound()
+    play_notification_sound()
     print("Горячая клавиша Ctrl+P нажата! Перезапуск программы...")
+    time.sleep(0.6)
     python = sys.executable
     os.execl(python, python, *sys.argv)
 
-    
-def show_all_items(e=None):
-    gui.show_all_items_list()
