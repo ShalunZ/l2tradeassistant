@@ -17,15 +17,15 @@ from utils.parser import parse_trade_data
 from io import BytesIO
 from config import TESSERACT_PATH
 from datetime import datetime
-from utils.screenshot import take_screenshot
+from utils.screenshot import *
 from utils.logger import debug_log
 
 
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
 # Настройки
-AREA_SIZE = 500
-OCR_TIMEOUT = 0.05
+
+OCR_TIMEOUT = 0.1
 TOOLTIP_OFFSET_X = -225  # Отступ от курсора
 TOOLTIP_OFFSET_Y = 40
 
@@ -33,12 +33,15 @@ TOOLTIP_OFFSET_Y = 40
 DEBUG_DIR = "debug_screenshots"
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
-# Глобальные переменные
+# Глобальные переменные (в начале файла)
 is_alt_pressed = False
 current_tooltip = None
 last_item_id = None
+last_cursor_pos = (0, 0)        # Последняя позиция курсора при анализе
+last_check_pos = (0, 0)         # Позиция, с которой начался текущий "стабильный" анализ
 item_cache = {}
 last_cleanup = time.time()
+STABLE_RADIUS = 15               # Пиксели: если в пределах — не перезапускаем OCR
 
 
 
@@ -322,22 +325,78 @@ def get_cursor_area():
 
 
 def tooltip_worker(root):
-    """Рабочий поток: отслеживает Alt + мышь"""
-    global is_alt_pressed, last_item_id
+    """Рабочий поток: отслеживает F + мышь"""
+    global is_alt_pressed, last_item_id, last_cursor_pos, last_check_pos
+
+    # Для отслеживания остановки мыши
+    prev_pos = (0, 0)
+    stable_start_time = None
+    STABLE_DURATION = 0.2
+    MAX_MOVEMENT = 5
+    STABLE_RADIUS = 15
+
+    failed_attempts = 0
+    MAX_FAILED_ATTEMPTS = 2
+    waiting_for_movement = False  # 🔥 Новый флаг
 
     while True:
         try:
-            # Проверяем, активно ли окно Lineage II
             active_process = get_active_window_process_name()
-            in_game = active_process in ['lineageii.exe', 'l2.exe', 'lu4.bin']  # Уточни имя процесса
-
+            in_game = active_process in ['lineageii.exe', 'l2.exe', 'lu4.bin']
             alt_pressed = keyboard.is_pressed('f')
 
-            if alt_pressed and in_game:  # Только если в игре
+            if alt_pressed and in_game:
                 if not is_alt_pressed:
                     is_alt_pressed = True
                     debug_log("✅ F зажат — начинаем анализ (в игре)")
 
+                x, y = mouse.Controller().position
+                current_pos = (x, y)
+                last_cursor_pos = current_pos
+
+                # --- 1. Проверка: в пределах стабильной зоны? ---
+                if last_item_id is not None and last_check_pos != (0, 0):
+                    dx = x - last_check_pos[0]
+                    dy = y - last_check_pos[1]
+                    distance = (dx**2 + dy**2) ** 0.5
+                    if distance <= STABLE_RADIUS:
+                        # В зоне → не делаем OCR
+                        time.sleep(OCR_TIMEOUT)
+                        continue
+
+                # --- 2. Проверка: ждём движения после неудач?
+                if waiting_for_movement:
+                    dx_move = x - prev_pos[0]
+                    dy_move = y - prev_pos[1]
+                    movement = (dx_move**2 + dy_move**2) ** 0.5
+                    if movement > MAX_MOVEMENT:
+                        debug_log("🟢 Мышь сдвинулась — сбрасываем счётчик неудач")
+                        failed_attempts = 0
+                        waiting_for_movement = False
+                        stable_start_time = None  # Сброс таймера остановки
+                    time.sleep(OCR_TIMEOUT)
+                    continue
+
+                # --- 3. Проверка: мышь остановилась? ---
+                dx_move = x - prev_pos[0]
+                dy_move = y - prev_pos[1]
+                movement = (dx_move**2 + dy_move**2) ** 0.5
+                prev_pos = current_pos
+
+                if movement <= MAX_MOVEMENT:
+                    if stable_start_time is None:
+                        stable_start_time = time.time()
+                    elif time.time() - stable_start_time >= STABLE_DURATION:
+                        pass  # Можно анализировать
+                    else:
+                        time.sleep(OCR_TIMEOUT)
+                        continue
+                else:
+                    stable_start_time = None
+                    time.sleep(OCR_TIMEOUT)
+                    continue
+
+                # --- Делаем скриншот и OCR ---
                 img, pos = get_cursor_area()
                 if img is None:
                     time.sleep(OCR_TIMEOUT)
@@ -345,31 +404,52 @@ def tooltip_worker(root):
 
                 data = parse_trade_data(pytesseract.image_to_string(img, lang='eng', config='--psm 6'))
                 item_id = data["item_id"]
-
                 debug_log(f"🔍 OCR нашёл item_id: {item_id}")
 
-                if item_id and item_id != last_item_id:
+                if item_id:
+                    failed_attempts = 0  # ✅ Успех — сбрасываем
+
                     info = get_item_info(item_id)
+                    if info and info["name"] == "Нет данных":
+                        debug_log("🟡 Нет данных в БД — принудительный повтор OCR")
+                        time.sleep(OCR_TIMEOUT)
+                        continue
+
                     if info:
                         show_tooltip(info, pos)
                         last_item_id = item_id
+                        last_check_pos = pos
                     else:
                         debug_log("❌ Не удалось получить данные для тултипа")
-                elif not item_id and current_tooltip:
-                    hide_tooltip()
+                else:
+                    failed_attempts += 1
+                    debug_log(f"🟡 Неудачная попытка OCR #{failed_attempts} (без item_id)")
+
+                    if failed_attempts >= MAX_FAILED_ATTEMPTS:
+                        debug_log("🔴 Достигнуто максимальное количество неудачных попыток. Ждём движения мыши...")
+                        waiting_for_movement = True  # 🔥 Включаем ожидание
+                        failed_attempts = 0  # Сбрасываем для будущих попыток
+                        stable_start_time = None  # Сбрасываем таймер остановки
+                        # → следующие итерации будут только проверять движение
+                    else:
+                        time.sleep(OCR_TIMEOUT)
+                        continue
 
             elif is_alt_pressed:
                 is_alt_pressed = False
                 debug_log("🔴 F отжат — останавливаем анализ")
                 hide_tooltip()
                 last_item_id = None
+                last_check_pos = (0, 0)
+                stable_start_time = None
+                failed_attempts = 0
+                waiting_for_movement = False
 
             time.sleep(OCR_TIMEOUT)
 
         except Exception as e:
             debug_log(f"💀 Критическая ошибка в tooltip_worker: {e}")
             time.sleep(1)
-
 
 def start_tooltip_analyzer(root):
     """Запускает анализатор подсказок"""

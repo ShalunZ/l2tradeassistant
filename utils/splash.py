@@ -4,8 +4,14 @@ from PIL import Image, ImageTk, ImageChops
 import os
 from config import resource_path
 from utils.logger import debug_log
+from utils.sound import *
+
+
+
 class SplashScreen:
     def __init__(self):
+
+        play_callout()
         self.root = tk.Toplevel()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
@@ -17,7 +23,7 @@ class SplashScreen:
             img_path = resource_path("data/img/loading1.png")
             original = Image.open(img_path).convert("RGBA")
         except Exception as e:
-            print(f"❌ Ошибка загрузки splash-экрана: {e}")
+            debug_log(f"❌ Ошибка загрузки splash-экрана: {e}")
             self.root.destroy()
             return
 
@@ -44,7 +50,7 @@ class SplashScreen:
         self.root.geometry(f"+{x}+{y}")
 
         # Закрытие
-        self.root.after(2000, self.destroy)
+        self.root.after(1500, self.destroy)
 
     def destroy(self):
         self.root.destroy()

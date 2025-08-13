@@ -34,7 +34,7 @@ def parse_trade_data(text):
                     seller = match.group(1).strip()
                     if seller and len(seller) >= 2:
                         data["seller_name"] = seller
-                data["outlet_type"] = 0  # Я покупаю
+                data["outlet_type"] = 1  # Я покупаю
                 break
             elif "buy items" in line_lower:
                 match = re.search(r'buy\s+items?[:\-]?\s*([A-Za-z0-9_]+)', line, re.IGNORECASE)
@@ -42,7 +42,7 @@ def parse_trade_data(text):
                     seller = match.group(1).strip()
                     if seller and len(seller) >= 2:
                         data["seller_name"] = seller
-                data["outlet_type"] = 1  # Я продаю
+                data["outlet_type"] = 0  # Я продаю
                 break
 
         # --- 2. Unit Price ---
@@ -99,7 +99,7 @@ def parse_trade_data(text):
         if data["quantity"] > 0 and data["total_price"] > 0:
             expected_price = round(data["total_price"] / data["quantity"])
             if abs(data["unit_price"] - expected_price) > 0:  
-                print(f"⚠️ OCR дал {data['unit_price']}, но ожидается {expected_price}. Исправляем.")
+                debug_log(f"⚠️ OCR дал {data['unit_price']}, но ожидается {expected_price}. Исправляем.")
                 data["unit_price"] = float(expected_price)
                 data["calculated_price"] = True
             else:
@@ -112,17 +112,17 @@ def parse_trade_data(text):
             data["total_price"] = data["unit_price"] * data["quantity"]
 
         # --- Логирование ---
-        print(f"🔍 Найден item_id: {data['item_id']}")
-        print(f"📝 Имя предмета: {data['item_name']}")
-        print(f"💰 Цена за единицу: {data['unit_price']}")
-        print(f"📦 Количество: {data['quantity']}")
-        print(f"🧮 Общая сумма: {data['total_price']}")
-        print(f"🛒 Тип лавки: {'Покупка' if data['outlet_type'] == 0 else 'Продажа'}")
-        print(f"👤 Продавец: {data['seller_name']}")
-        print(f"🔧 Исправлена цена: {data['calculated_price']}")
+        debug_log(f"🔍 Найден item_id: {data['item_id']}")
+        debug_log(f"📝 Имя предмета: {data['item_name']}")
+        debug_log(f"💰 Цена за единицу: {data['unit_price']}")
+        debug_log(f"📦 Количество: {data['quantity']}")
+        debug_log(f"🧮 Общая сумма: {data['total_price']}")
+        debug_log(f"🛒 Тип лавки: {'Покупка' if data['outlet_type'] == 0 else 'Продажа'}")
+        debug_log(f"👤 Продавец: {data['seller_name']}")
+        debug_log(f"🔧 Исправлена цена: {data['calculated_price']}")
 
     except Exception as e:
-        print(f"❌ Ошибка при парсинге данных: {e}")
+        debug_log(f"❌ Ошибка при парсинге данных: {e}")
         play_error_sound()
 
     return data
