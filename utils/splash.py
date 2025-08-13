@@ -3,7 +3,7 @@ import tkinter as tk
 from PIL import Image, ImageTk, ImageChops
 import os
 from config import resource_path
-
+from utils.logger import debug_log
 class SplashScreen:
     def __init__(self):
         self.root = tk.Toplevel()

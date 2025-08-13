@@ -29,7 +29,7 @@ def start_hotkey_listener():
 def restart_program():
     """Перезапускает программу при нажатии Ctrl+P."""
     play_notification_sound()
-    print("Горячая клавиша Ctrl+P нажата! Перезапуск программы...")
+    print("💀💀Перезапуск программы...💀💀")
     time.sleep(0.6)
     python = sys.executable
     os.execl(python, python, *sys.argv)

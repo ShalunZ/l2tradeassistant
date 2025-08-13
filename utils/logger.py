@@ -2,50 +2,73 @@
 import os
 import sys
 import datetime
+import inspect
 
+# Имя файла лога
 LOG_FILE = "log.txt"
 
-# Глобальная функция для логирования с временем
-def debug_log(message):
-    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
+# Глобальный флаг дебага
+DEBUG = True
 
-class SafeLogger:
-    def __init__(self, stream, logfile):
-        self.stream = stream
-        self.logfile = logfile
-
-    def write(self, data):
-        if data.strip():
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log_entry = f"[{timestamp}] {data}"
-            if not log_entry.endswith('\n'):
-                log_entry += '\n'
-            self.logfile.write(log_entry)
-            self.logfile.flush()
-
-        if self.stream is not None:
-            self.stream.write(data)
-            self.stream.flush()
-
-    def flush(self):
-        if self.stream is not None:
-            self.stream.flush()
-        self.logfile.flush()
+# Глобальная ссылка на файл
+_logfile = None
 
 
-def setup_logger():
-    """Перенаправляет stdout и stderr в файл + сохраняет оригинальные потоки"""
-    if hasattr(sys, 'frozen'):  # Если запущен из .exe
+def _ensure_logfile():
+    """Создаёт log.txt, если его нет, и возвращает открытый файловый объект"""
+    global _logfile
+    if _logfile is None:
         try:
-            logfile = open(LOG_FILE, 'a', encoding='utf-8')
+            # Создаёт файл, если не существует, и открывает в режиме 'a' (append)
+            _logfile = open(LOG_FILE, 'a', encoding='utf-8')
+            # Явно закрываем, чтобы убедиться, что файл создан
+            _logfile.close()
+            # Открываем снова — на всякий случай
+            _logfile = open(LOG_FILE, 'a', encoding='utf-8')
         except Exception as e:
-            print(f"❌ Не удалось открыть log.txt: {e}")
-            logfile = None
+            print(f"❌ Не удалось создать или открыть {LOG_FILE}: {e}")
+    return _logfile
 
-        # Оборачиваем stdout и stderr
+
+def debug_log(message: str, module_name: str = None):
+    """
+    Централизованная функция логирования.
+    :param message: Сообщение для лога
+    :param module_name: Имя модуля (автоопределение, если не указано)
+    """
+    if not DEBUG:
+        return
+
+    # Определяем имя модуля
+    if module_name is None:
+        frame = inspect.currentframe().f_back
+        module = frame.f_globals['__name__']
+        module_name = module.split('.')[-1]  # Только имя модуля
+
+    # Формируем строку
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"[{timestamp}] [{module_name}] {message}\n"
+
+    # Печатаем в консоль
+    print(log_entry.rstrip())
+
+    # Пишем в файл, если запущено из .exe
+    if hasattr(sys, 'frozen'):
+        logfile = _ensure_logfile()
         if logfile:
-            sys.stdout = SafeLogger(sys.stdout, logfile)
-            sys.stderr = SafeLogger(sys.stderr, logfile)
+            try:
+                logfile.write(log_entry)
+                logfile.flush()
+            except Exception as e:
+                print(f"❌ Ошибка записи в лог-файл: {e}")
 
-        debug_log("🟢 Приложение запущено")
-        debug_log(f"📁 Рабочая директория: {os.getcwd()}")
+
+def close_logger():
+    """Закрывает файл лога при завершении программы"""
+    global _logfile
+    if _logfile:
+        try:
+            _logfile.close()
+        except:
+            pass
+        _logfile = None

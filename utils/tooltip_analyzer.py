@@ -2,20 +2,24 @@
 import keyboard
 import time
 import threading
-from pynput import mouse
-from PIL import ImageGrab
-import tkinter as tk
-from database.db import connect_db
-from utils.parser import parse_trade_data
-from io import BytesIO
 import os
-from datetime import datetime
 import pytesseract
-from config import TESSERACT_PATH
 import win32gui
 import win32process
 import win32api
 import win32con
+import tkinter as tk
+
+from pynput import mouse
+from PIL import ImageGrab
+from database.db import connect_db
+from utils.parser import parse_trade_data
+from io import BytesIO
+from config import TESSERACT_PATH
+from datetime import datetime
+from utils.screenshot import take_screenshot
+from utils.logger import debug_log
+
 
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
@@ -36,13 +40,6 @@ last_item_id = None
 item_cache = {}
 last_cleanup = time.time()
 
-# 🔧 Включить/выключить дебаг
-DEBUG = True
-
-
-def debug_log(message):
-    if DEBUG:
-        print(f"[Tooltip Analyzer] {message}")
 
 
 def get_active_window_process_name():
@@ -315,12 +312,8 @@ def get_cursor_area():
         x, y = mouse.Controller().position
         debug_log(f"🖱️ Позиция курсора: ({x}, {y})")
 
-        left = x 
-        top = y 
-        right = left + AREA_SIZE
-        bottom = top + AREA_SIZE
 
-        img = ImageGrab.grab(bbox=(left, top, right, bottom))
+        img = take_screenshot()
         return img, (x, y)
 
     except Exception as e:
@@ -331,8 +324,6 @@ def get_cursor_area():
 def tooltip_worker(root):
     """Рабочий поток: отслеживает Alt + мышь"""
     global is_alt_pressed, last_item_id
-
-    debug_log("🟢 Tooltip Analyzer запущен. Ожидание Alt...")
 
     while True:
         try:
@@ -345,7 +336,7 @@ def tooltip_worker(root):
             if alt_pressed and in_game:  # Только если в игре
                 if not is_alt_pressed:
                     is_alt_pressed = True
-                    debug_log("✅ Alt зажат — начинаем анализ (в игре)")
+                    debug_log("✅ F зажат — начинаем анализ (в игре)")
 
                 img, pos = get_cursor_area()
                 if img is None:
@@ -369,7 +360,7 @@ def tooltip_worker(root):
 
             elif is_alt_pressed:
                 is_alt_pressed = False
-                debug_log("🔴 Alt отжат — останавливаем анализ")
+                debug_log("🔴 F отжат — останавливаем анализ")
                 hide_tooltip()
                 last_item_id = None
 
@@ -384,4 +375,4 @@ def start_tooltip_analyzer(root):
     """Запускает анализатор подсказок"""
     thread = threading.Thread(target=tooltip_worker, args=(root,), daemon=True)
     thread.start()
-    debug_log("🚀 Tooltip Analyzer запущен. Нажмите Left Alt + наведите на предмет.")
+    debug_log("🚀 Tooltip Analyzer запущен. Нажмите F + наведите на предмет.")

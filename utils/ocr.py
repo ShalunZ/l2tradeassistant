@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from config import TESSERACT_PATH
 import pytesseract
-
+from utils.logger import debug_log
 
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 

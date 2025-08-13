@@ -1,7 +1,7 @@
 # utils/parser.py
 from utils.sound import play_error_sound
 import re
-
+from utils.logger import debug_log
 
 
 

@@ -5,9 +5,9 @@ import requests
 import shutil
 from config import DB_PATH
 from utils.logger import debug_log
-from utils.sound import play_notification_sound, play_error_sound
+from utils.sound import *
 from core.handler import restart_program
-
+from utils.logger import debug_log
 
 # ✅ Правильная ссылка на скачивание
 DB_DOWNLOAD_URL = "https://github.com/ShalunZ/l2tradeassistant/releases/download/v1.0/l2trade.db"
@@ -54,7 +54,6 @@ def download_db():
         # 🔁 ДОБАВИМ ПРОВЕРКУ: убедимся, что файл существует и не нулевой
         if os.path.exists(DB_PATH) and os.path.getsize(DB_PATH) > 0:
             debug_log("✅ База данных успешно обновлена и готова к использованию!")
-            play_notification_sound()
             return True
         else:
             debug_log("❌ Файл базы создан, но пустой или недоступен")

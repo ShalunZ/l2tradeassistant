@@ -1,45 +1,19 @@
 # utils/sound.py
-import pygame
-import os
+import winsound
+import threading
 from config import resource_path
-
-# Инициализация pygame mixer
-pygame.mixer.init()
-
-volume = 0.5
-
-# Загрузка звуков
-SOUNDS = {
-    'success': pygame.mixer.Sound(resource_path('data/sounds/agree.wav')),
-    'error': pygame.mixer.Sound(resource_path('data/sounds/angry.wav')),
-    'notification': pygame.mixer.Sound(resource_path('data/sounds/wonder.wav')),
-    'callout': pygame.mixer.Sound(resource_path('data/sounds/callout.wav'))
-}
-
-
-# Установка громкости (0.0 до 1.0)
-SOUNDS['success'].set_volume(volume)
-SOUNDS['error'].set_volume(volume)
-SOUNDS['notification'].set_volume(volume)
-SOUNDS['callout'].set_volume(volume)
+from utils.logger import debug_log
+def _play_sound_async(wav_path):
+    winsound.PlaySound(wav_path, winsound.SND_FILENAME)
 
 def play_success_sound():
-    SOUNDS['success'].play()
+    threading.Thread(target=_play_sound_async, args=(resource_path('data/sounds/agree.wav'),), daemon=True).start()
 
 def play_error_sound():
-    SOUNDS['error'].play()
+    threading.Thread(target=_play_sound_async, args=(resource_path('data/sounds/angry.wav'),), daemon=True).start()
 
 def play_notification_sound():
-    SOUNDS['notification'].play()
+    threading.Thread(target=_play_sound_async, args=(resource_path('data/sounds/wonder.wav'),), daemon=True).start()
 
 def play_callout():
-    SOUNDS['callout'].play()
-
-
-def set_sounds_volume(new : float):
-    volume = new
-
-    SOUNDS['success'].set_volume(volume)
-    SOUNDS['error'].set_volume(volume)
-    SOUNDS['notification'].set_volume(volume)
-    SOUNDS['callout'].set_volume(volume)
+    threading.Thread(target=_play_sound_async, args=(resource_path('data/sounds/callout.wav'),), daemon=True).start()

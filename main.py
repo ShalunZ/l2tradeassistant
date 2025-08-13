@@ -1,15 +1,23 @@
 # main.py
 import tkinter as tk
-from utils.tooltip_analyzer import start_tooltip_analyzer
-from utils.splash import SplashScreen
-from utils.logger import setup_logger
-from utils.sound import play_error_sound, play_callout
-from core.handler import restart_program
-from utils.tray import *
 import keyboard
 import pygame
 import time
 import threading
+
+
+from utils.tooltip_analyzer import start_tooltip_analyzer
+from utils.splash import SplashScreen
+from utils.sound import play_error_sound, play_callout
+from utils.logger import close_logger,debug_log
+
+from core.handler import restart_program
+from utils.tray import *
+from updater import check_and_update
+
+
+
+
 
 # Глобальные переменные
 root = None
@@ -19,7 +27,7 @@ tray_icon = None
 def on_exit():
     """Запрос на выход из приложения"""
     global exit_requested, tray_icon
-    print("🛑 Приложение закрыто")
+    debug_log("🛑 Приложение закрыто")
     play_error_sound()
     time.sleep(0.7)
     exit_requested = True
@@ -31,6 +39,7 @@ def check_exit():
     global exit_requested
     if exit_requested:
         try:
+            close_logger()
             root.quit()
             root.destroy()
         except tk.TclError:
@@ -45,7 +54,6 @@ def start_tray():
 
 def main():
     global root
-    setup_logger()
 
     root = tk.Tk()
     root.withdraw()
@@ -54,13 +62,12 @@ def main():
     splash = SplashScreen()
     root.wait_window(splash.root)
     
-    #Проверяем обновления 
     from updater import check_and_update
     if check_and_update():
-        return
+        play_success_sound()
 
-    # Звук уведомления
-    play_callout()
+
+
 
     # Запуск анализатора
     start_tooltip_analyzer(root)
@@ -69,8 +76,8 @@ def main():
     keyboard.add_hotkey("ctrl+q", on_exit)
     keyboard.add_hotkey("ctrl+p", restart_program)
 
-    print("🟢 Приложение запущено. Нажмите F для анализа.")
-    print("ℹ️  Для выхода нажмите Ctrl+Q")
+    debug_log("🟢 Приложение запущено. Нажмите F для анализа.")
+    debug_log("ℹ️  Для выхода нажмите Ctrl+Q")
 
     # Запускаем проверку выхода
     root.after(100, check_exit)
@@ -79,7 +86,8 @@ def main():
     tray_thread = threading.Thread(target=start_tray, daemon=True)
     tray_thread.start()
 
-
+     # Звук уведомления
+    play_callout()
     try:
         root.mainloop()
     except KeyboardInterrupt:
