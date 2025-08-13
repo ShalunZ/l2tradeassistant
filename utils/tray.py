@@ -2,6 +2,7 @@
 import pystray
 from PIL import Image
 from config import resource_path
+from utils.sound import *
 
 # Глобальные переменные
 tray_icon = None

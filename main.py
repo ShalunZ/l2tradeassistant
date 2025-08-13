@@ -53,6 +53,11 @@ def main():
     # Показываем splash screen
     splash = SplashScreen()
     root.wait_window(splash.root)
+    
+    #Проверяем обновления 
+    from updater import check_and_update
+    if check_and_update():
+        return
 
     # Звук уведомления
     play_callout()

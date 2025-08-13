@@ -36,5 +36,10 @@ def play_callout():
     SOUNDS['callout'].play()
 
 
-def set_sounds_volume(volume):
-    SOUNDS.set_volume(volume)
+def set_sounds_volume(new : float):
+    volume = new
+
+    SOUNDS['success'].set_volume(volume)
+    SOUNDS['error'].set_volume(volume)
+    SOUNDS['notification'].set_volume(volume)
+    SOUNDS['callout'].set_volume(volume)

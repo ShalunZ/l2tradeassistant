@@ -14,7 +14,8 @@ import pytesseract
 from config import TESSERACT_PATH
 import win32gui
 import win32process
-import psutil
+import win32api
+import win32con
 
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
@@ -45,16 +46,28 @@ def debug_log(message):
 
 
 def get_active_window_process_name():
-    """Возвращает имя процесса активного окна"""
+    """Возвращает имя процесса активного окна (без psutil)"""
     try:
         hwnd = win32gui.GetForegroundWindow()
         _, pid = win32process.GetWindowThreadProcessId(hwnd)
-        process = psutil.Process(pid)
-        name = process.name().lower()
-        return name
+        
+        # Открываем процесс
+        handle = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION, False, pid)
+        if not handle:
+            return None
+            
+        # Получаем имя исполняемого файла
+        try:
+            # Этот вызов может не работать в некоторых контекстах
+            exe_name = win32process.GetModuleFileNameEx(handle, 0)
+            return exe_name.lower().split('\\')[-1]
+        except:
+            # Альтернатива: через EnumProcesses (если выше не сработало)
+            return str(pid)  # В крайнем случае — хотя бы PID
+        finally:
+            win32api.CloseHandle(handle)
     except Exception as e:
         return None
-
 
 def cleanup_cache():
     global item_cache, last_cleanup
